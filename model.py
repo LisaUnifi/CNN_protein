@@ -3,31 +3,37 @@ import torch.nn as nn
 import torch.nn.functional as F 
 
 
-class Net(nn.Module):
+class CNN_protein(nn.Module):
     def __init__(self, channels, dim, depth, dropout):
 
-        super(Net, self).__init__()
+        super(CNN_protein, self).__init__()
         self.dim = dim
+        self.channels = channels
         self.depth = depth
+        self.dropout = dropout
 
-        self.batchNorm = nn.BatchNorm2d(channels)
+        self.batchNorm = nn.BatchNorm2d(self.channels)
         self.batchNorm64 = nn.BatchNorm2d(64)
 
-        self.conv1 = nn.Conv2d(channels, 64, 1)
-        self.residualConv1 = nn.Conv2d(64, 64, 3)
-        self.residualConv2 = nn.Conv2d(64, 64, 3, dilation=2)
-        self.residualConv4 = nn.Conv2d(64, 64, 3, dilation=4)
-        self.conv2 = nn.Conv2d(64, 1, 3)
+        self.conv1 = nn.Conv2d(self.channels, 64, 1, padding='same')
+        self.residualConv1 = nn.Conv2d(64, 64, 3, padding='same')
+        self.residualConv2 = nn.Conv2d(64, 64, 3, padding='same', dilation=2)
+        self.residualConv4 = nn.Conv2d(64, 64, 3, padding='same', dilation=4)
+        self.conv2 = nn.Conv2d(64, 1, 3, padding='same')
 
-        self.drop = nn.Dropout2d(dropout)
+        self.drop = nn.Dropout2d(self.dropout)
+
+        self.relu = nn.ReLU(inplace=True)
 
 
     def residualBlock(self, input, i):
+        print(input.shape)
+        print(i)
         x = self.batchNorm64(input)
-        x = F.relu(x)
+        x = self.relu(x)
         x = self.residualConv1(x)
         x = self.drop(x)
-        x = F.relu(x)
+        x = self.relu(x)
         if i%3 == 0:
             x = self.residualConv1(x)
         elif i%3 == 1:
@@ -38,21 +44,21 @@ class Net(nn.Module):
 
 
     def forward(self, input):
-        #devo definire la matrice?
-
         x = self.batchNorm(input)
-        x = F.relu(x)
+        x = self.relu(x)
         x = self.conv1(x)
+        print(x.shape)
+        print('Residual Block now:')
 
-        #Residual Block eseguito depth volte
+        #Residual Block executed depth time
         for i in range(self.depth):
             x += self.residualBlock(x, i)
         
         x = self.batchNorm64(x)
-        x = F.relu(x)
+        x = self.relu(x)
         x = self.conv2(x)
-        output = F.sigmoid(x)
+        output = torch.sigmoid(x)
+        print(output.shape)
         return output
 
-    #serve dim??
     

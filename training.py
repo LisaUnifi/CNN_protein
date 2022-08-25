@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as opt
 import argparse
+from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import os
@@ -48,7 +49,12 @@ experiment.set_name(args.experiment)
 #experiment.log_parameters({TODO})
 
 # Device specifications
-device = 'cuda:' + str(args.device) if torch.cuda.is_available() else 'cpu'
+#device = 'cuda:' + str(args.device) if torch.cuda.is_available() else 'cpu'
+#device = torch.device(device)
+#print(device)
+
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print(device)
 #print("Device name: ", device, torch.cuda.get_device_name(int(args.device)))
 
 
@@ -79,27 +85,28 @@ net = CNN_protein(channels, L, depth, dropout)
 #ottimizzatore e loss
 lossFunction = nn.BCELoss() 
 optimizer = opt.Adam(net.parameters(), learning_rate) 
-#torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(True)
 
 net = net.to(device)
 #training 
 for e in range(epochs):
     running_loss = 0.0
-    for i, data in enumerate(trainloader):
-        inputs = data['msa']
-        print(inputs.shape)
-        print(inputs.type)
-        labels = data['distances']
-        optimizer.zero_grad()
-        outputs = net(inputs.float())
-        
-        #backward prop
-        loss = lossFunction(outputs, labels.float())
-        loss.backward()
-        optimizer.step()
+    with tqdm(trainloader, unit='batch') as ep:
+        for i, data in enumerate(ep):
+            ep.set_description(f'Epoch {e}: ')
+            inputs = data['msa'].to(device)
+            labels = data['distances'].to(device)
+            
+            optimizer.zero_grad()
+            outputs = net(inputs.float())
+            
+            #backward prop
+            loss = lossFunction(outputs, labels.float())
+            loss.backward()
+            optimizer.step()
 
-        running_loss += loss.item()
-        if i%2000==1999:
-            print('[%d, %5d] loss: %.3f'%(epochs+1,i+1,running_loss/2000))
-    
+            running_loss += loss.item()
+            
+    print('[%d, %5d] loss: %.3f'%(e, running_loss/len(trainloader)))
+        
 

@@ -23,12 +23,10 @@ class CNN_protein(nn.Module):
 
         self.drop = nn.Dropout2d(self.dropout)
 
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
 
     def residualBlock(self, input, i):
-        print(input.shape)
-        print(i)
         x = self.batchNorm64(input)
         x = self.relu(x)
         x = self.residualConv1(x)
@@ -47,18 +45,15 @@ class CNN_protein(nn.Module):
         x = self.batchNorm(input)
         x = self.relu(x)
         x = self.conv1(x)
-        print(x.shape)
-        print('Residual Block now:')
 
         #Residual Block executed depth time
         for i in range(self.depth):
-            x += self.residualBlock(x, i)
+            x = x + self.residualBlock(x, i)
         
         x = self.batchNorm64(x)
         x = self.relu(x)
         x = self.conv2(x)
         output = torch.sigmoid(x)
-        print(output.shape)
         return output
 
     

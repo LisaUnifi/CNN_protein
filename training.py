@@ -10,6 +10,8 @@ import torch.nn.functional as F
 import torch.optim as opt
 import argparse
 from tqdm import tqdm
+import time
+import json
 import pandas as pd
 import numpy as np
 import os
@@ -17,6 +19,11 @@ import os
 from model import CNN_protein 
 from datasetOp import MSA
 
+'''
+file_csv = '/home/lisa/Desktop/CNN_protein/training_set.csv' 
+file_csv = '/home/lisa/Desktop/CNN_protein/validation_set.csv'
+default='/media/lisa/UNI/ML/training_set_Rosetta/dataset/npz'
+'''
 
 parser = argparse.ArgumentParser(description="Train Net")
 
@@ -31,7 +38,7 @@ parser.add_argument("--dropout", dest="dropout", default=0.3, help="Dropout Valu
 #Change a False
 parser.add_argument("--train", dest="train", default=True, help="Choose for training")
 parser.add_argument("--validate", dest="validate", default=True, help="Choose for validate")
-parser.add_argument("--dataset", dest="dataset", default='/media/lisa/UNI/ML/training_set_Rosetta/dataset/npz', help="Path to Dataset Elements")
+parser.add_argument("--dataset", dest="dataset", default='../Dataset/training_set/npz', help="Path to Dataset Elements")
 
 # Comet Specifics
 parser.add_argument("--device", dest="device", default='0', help="choose GPU")
@@ -46,7 +53,6 @@ args = parser.parse_args()
 # Experiment with Comet
 experiment = Experiment(api_key="MmTUbWvVERazQRViuiCXkyEFH", project_name=args.project)
 experiment.set_name(args.experiment)
-#experiment.log_parameters({TODO})
 
 # Device specifications
 #device = 'cuda:' + str(args.device) if torch.cuda.is_available() else 'cpu'
@@ -55,19 +61,17 @@ experiment.set_name(args.experiment)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(device)
-#print("Device name: ", device, torch.cuda.get_device_name(int(args.device)))
-
 
 #transforms serve per i dati
 if args.train:
-    file_csv = '/home/lisa/Desktop/CNN_protein/training_set.csv'
+    file_csv = './training_set.csv'
 else: 
-    file_csv = '/home/lisa/Desktop/CNN_protein/validation_set.csv'
+    file_csv = './validation_set.csv'
 
 npz = args.dataset
-L = 256 # Dimension of matrix 
+L = 128 #256 # Dimension of matrix 
 
-learning_rate = int(args.learning_rate)
+learning_rate = float(args.learning_rate)
 epochs = int(args.epochs)
 batch_size = int(args.batch_size)
 depth = int(args.depth)
@@ -77,10 +81,34 @@ channels = 82 #da calcolare
 
 # Loading and Transforming data
 trainset = MSA(file_csv, npz, L)
-trainloader = DataLoader(trainset, batch_size, shuffle=True, num_workers=1) #num_workers (int, optional) – how many subprocesses to use for data loading. 0 means that the data will be loaded in the main process. (default: 0)
+valset = MSA(file_csv, npz, L)
+trainloader = DataLoader(trainset, batch_size, shuffle=True) #num_workers (int, optional) – how many subprocesses to use for data loading. 0 means that the data will be loaded in the main process. (default: 0)
+valloader = DataLoader(valset, batch_size, shuffle=True)
 
 #inizializzazione rete
 net = CNN_protein(channels, L, depth, dropout)
+
+hyper_parameters = {
+    #ADD
+    'batch_size': batch_size,
+    'epochs': epochs,
+    'learning_rate': learning_rate,
+    'dropout_value': dropout,
+}
+experiment.log_parameters(hyper_parameters)
+experiment.set_model_graph(net)
+
+#Weights
+wpath = '/model_weights'
+new_path = os.path.join(wpath, args.experiment)
+
+if not os.path.exists(new_path):
+    os.makedirs(new_path)
+
+#Hyperparameters dictionary
+with open(new_path + '/hp.json', 'w') as hp:
+    json.dump(hyper_parameters, hp, indent=4)
+
 
 #ottimizzatore e loss
 lossFunction = nn.BCELoss() 
@@ -89,8 +117,12 @@ torch.autograd.set_detect_anomaly(True)
 
 net = net.to(device)
 #training 
+
+print('START TRAINING:')
 for e in range(epochs):
-    running_loss = 0.0
+    net.train()
+    train_loss = 0.0
+    train_accuracy = 0.0
     with tqdm(trainloader, unit='batch') as ep:
         for i, data in enumerate(ep):
             ep.set_description(f'Epoch {e}: ')
@@ -102,11 +134,48 @@ for e in range(epochs):
             
             #backward prop
             loss = lossFunction(outputs, labels.float())
+            train_accuracy = '' #TODO
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
-            
-    print('[%d, %5d] loss: %.3f'%(e, running_loss/len(trainloader)))
-        
+            train_loss += loss.item()
+        time.sleep(0.1)
+    print('Loss: ' + str(train_loss/len(trainloader)))
+    experiment.log_metric('TRAIN_LOSS: ', train_loss/len(trainloader), step = epochs + 1)
+    experiment.log_metric('TRAIN_ACCURACY: ', train_accuracy/len(trainloader), step = epochs + 1)
+    print(f'END TRAINING EPOCH {e}:')
 
+    if epochs % 5 == 0:
+        print(f'START EVALUATION:')
+        net.eval() 
+        val_loss = 0.0
+        val_accuracy = 0.0
+        with torch.no_grad():
+            with tqdm(valloader, unit='batch') as vep:
+                for vi, vdata in enumerate(vep):
+                    ep.set_description(f'Validation Epoch {e}: ')
+                    vinput = vdata['msa'].to(device)
+                    vlabels = vdata['distances'].to(device)
+
+                    voutputs = net(vinput.float())
+
+                    vloss = lossFunction(voutputs, vlabels.float())
+                    val_loss += vloss.item()
+                    vacc = ''
+                    val_accuracy += vacc.item()
+        print('Evaluation Loss: ' + str(val_loss/len(valloader)))
+        experiment.log_metric('VAL_LOSS: ', val_loss/len(valloader), step = epochs + 1)
+        experiment.log_metric('VAL_ACCURACY: ', val_accuracy/len(valloader), step = epochs + 1)
+        print(f'END EVALUATION EPOCH {e}:')
+
+
+    #Verifica che vada bene loss        
+    
+    if epochs % 5 == 0:
+        torch.save(net.state_dict(), new_path + '/w_' + str(epochs + 1) + '.pth')
+torch.save(net.state_dict(), new_path + '/w_end' + '.pth')
+
+print(f'END TRAINING!')
+experiment.end()
+
+        

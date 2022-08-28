@@ -8,6 +8,8 @@ import os
 
 
 class FixedDimension(object):
+    # RANDOMLY SLICED ??
+
     #Prende i primi 256 elementi nelle sequenze del msa
     def __init__(self, size): #dimensione della matrice
         self.size = size

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn 
-import torch.nn.functional as F 
 
 
 class CNN_protein(nn.Module):
@@ -25,6 +24,8 @@ class CNN_protein(nn.Module):
 
         self.relu = nn.ReLU()
 
+        self.sig = nn.Sigmoid()
+
 
     def residualBlock(self, input, i):
         x = self.batchNorm64(input)
@@ -46,6 +47,8 @@ class CNN_protein(nn.Module):
         x = self.relu(x)
         x = self.conv1(x)
 
+        #Max pooling??
+
         #Residual Block executed depth time
         for i in range(self.depth):
             x = x + self.residualBlock(x, i)
@@ -53,7 +56,9 @@ class CNN_protein(nn.Module):
         x = self.batchNorm64(x)
         x = self.relu(x)
         x = self.conv2(x)
-        output = torch.sigmoid(x)
-        return output
+        #nn.Sigmoid?
+        output = self.sig(x)
 
+        #simmetrizza?
+        return output
     

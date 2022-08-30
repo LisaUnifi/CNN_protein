@@ -1,6 +1,7 @@
 import numpy as np 
 import pandas as pd
 import torch
+import math
 import os
 
 class FixedDimension(object):
@@ -73,6 +74,9 @@ class OneHotEncoded(object):
 class PSFM(object):
     #Genera Position Specific Frequency Matrix: https://www.researchgate.net/publication/320173501_PSFM-DBT_Identifying_DNA-Binding_Proteins_by_Combing_Position_Specific_Frequency_Matrix_and_Distance-Bigram_Transformation
     #tenedo in considerazione gli MSA
+
+    #COUNT_NONZERO
+
     def __init__(self, size): #dimensione della matrice
         self.size = size
 
@@ -122,19 +126,6 @@ class ShannonEntropy(object):
             print("Error: Wrong matrix dimension in PSFM!")
             return []
     
-    def shannon_entropy_corrected(dna_sequence):
-        """Custom implementation of shannon entropy with a full non-binarized sequence
-            Formula looks like this
-            H(S) = −Σ P(Si) log2 (P(Si))
-            P(Si) here is simply the relative frequency of character A,T,G,C or n in the string.
-        """
-        entropy = 0
-        for nucleotide in {'A', 'T', 'G', 'C', 'N'}:
-            rel_freq = dna_sequence.count(nucleotide) / len(dna_sequence)
-            if rel_freq > 0:
-                entropy = entropy + -(rel_freq * math.log(rel_freq, 2))
-            
-        return entropy
 
 
 class Distances(object):
@@ -214,65 +205,88 @@ if __name__ == "__main__":
     npz = '/media/lisa/UNI/ML/training_set_Rosetta/dataset/npz'
     #data = MSA(file_csv, npz, 256)
     #print(data)
+    msa = np.array([[1, 1, 3, 1], [1, 1, 3, 1],[1, 2, 2, 2],[2, 2, 1, 5], [1, 1, 3, 1], [1, 1, 3, 1],[1, 2, 2, 2],[2, 2, 1, 5]])
 
-    #print(data.getitem(12))
+    print(data.getitem(12))
 
-    x = torch.tensor([[[1, 2, 3, 4],[1, 2, 3, 4],[1, 2, 3, 4]],[[1, 2, 3, 4],[1, 2, 3, 4],[1, 2, 3, 4]]])
-    print(x.shape)
+    #prova dimensionalità array finale dei sample 
 
-    x = x[:, None, :, :]
-    print(x.shape)
+    #inizia codice per generare msa per le operazioni delle matrici di covarianza 
+    
+    #msa = torch.permute(msa, (0, 2, 1))
+    print(msa)
+    
+            
 
     '''
-    for i in range(20):
-        if i in sequence: 
-            a = ([])
-            for j in sequence:
-                if j == i:
-                    a = np.append(a, 1)
-                else:
-                    a = np.append(a, 0)
-                print(a)
-            sample = np.append(sample, a, axis=0)
-        else:
-            sample = np.append(sample, np.zeros((6), dtype=int), axis=0)
-    sample = sample.reshape(21, 6)
-    sample = sample[1:21, :]
-    print(sample)
-    sample = sample[:, :, np.newaxis]
-    t = sample
-    print(sample.shape)
-    for i in range(6-1):
-        sample = np.concatenate((sample, t), axis=2)
-        #print('Iterazione ' + str(i))
-        #print(sample)
-    #sample = sample.reshape(20, 6, 6)
-    print(sample.shape)
-    print(sample)
 
-    sample = sample.astype(int)
-    sample = torch.from_numpy(sample)
-    sample = torch.cat((torch.permute(sample, (0, 2, 1)), sample), 0)
-    print(sample.shape)
-    print(sample)
+    #calcolo degli weights 
+    weight = np.ones(msa.shape[0])
+    print(weight)
+    #percent = msa.shape[1] * 0.8
+    #print(percent)
+    for i in range(msa.shape[0]):
+        for j in range(msa.shape[0]-(i+1)):
+            #metti j+1
+            similar = msa.shape[1] * 0.2
+            for k in range(msa.shape[1]):
+                if (msa[i, k] != msa[j+(i+1), k]):
+                    similar -= 1
+            if similar > 0:
+                weight[i] += 1
+                weight[j+(i+1)] += 1
+    print(weight)
+
+    #calcolo wm che è inverso 
+    weight = 1/weight
+    print(weight)
+
+    meff = sum([i for i in weight])
+    print(meff)
+
+    #calcolo frequenza
+    pa = np.ndarray([msa.shape[1], 6]) #Matrice Lx21
+
+    for i in range(msa.shape[1]):
+        for a in range(6):
+            pa[i, a] = 1.0 
+        for k in range(msa.shape[0]):
+            a = msa[k, i]
+            pa[i, a] += weight[k]
+        for a in range(6):
+            pa[i, a] /= (6.0 + meff)
+    #print(pa)
+            
+    pab = np.ndarray([msa.shape[1], msa.shape[1], 6, 6]) #Matrice LxLx21x21
+
+    for i in range(msa.shape[1]):
+        for j in range(msa.shape[1]):
+            for a in range(6):
+                for b in range(6):
+                    pab[i, j, a, b] = 1.0 / 6.0
+            for k in range(msa.shape[0]):
+                a = msa[k, i]
+                b = msa[k, j]
+                pab[i, j, a, b] += weight[k]
+            for a in range(6):
+                for b in range(6):
+                    pab[i, j, a, b] /= (6.0 + meff)
+    #print(pab)
+
+    cov = np.ndarray([6, 6, msa.shape[1], msa.shape[1]]) #Matrice LxLx21x21
+    for a in range(6):
+        for b in range(6):
+            for i in range(msa.shape[1]):
+                for j in range(msa.shape[1]):
+                    cov[a, b, i, j] = pab[i, j, a, b] - (pa[i, a] * pa[j, b])
+    #print(cov)
+    #print(cov.shape)
+    cov = np.reshape(cov, [36,4,4])
+    #print(cov[30,3,3])
+    #cov = torch.from_numpy(cov)
+    #cov = torch.permute(cov, (2, 0, 1))
+    #print(cov)
+    print(cov.shape)
+    print(cov)
     '''
-
-
-
-    #dist = file['dist6d']
-    #print(dist.shape)
-    '''
-    txt = '/home/lisa/Desktop/ML/training_set.csv'
-    df = pd.read_csv(txt)
-    print(df.shape[0])
-    for i in range(df.shape[0]):
-        print(df.iloc[i,1])
-    print(df.iloc[0,1])
-
-    index = [3, 5, 88]
-    npz = '/media/lisa/UNI/ML/training_set_Rosetta/dataset/npz'
-    protein = []
-    for i in index:
-        protein.append(os.path.join(npz, df.iloc[i, 1]+'.npz'))
-    print(protein)
-    '''
+    

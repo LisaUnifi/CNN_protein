@@ -25,12 +25,14 @@ file_csv = '/home/lisa/Desktop/CNN_protein/validation_set.csv'
 default='/media/lisa/UNI/ML/training_set_Rosetta/dataset/npz'
 '''
 
-parser = argparse.ArgumentParser(description="Train Net")
+parser = argparse.ArgumentParser(description="CNN Net")
 
 # Hyperparameters
+parser.add_argument("--dim", dest="dim", default=256, help="Batch Size")
 parser.add_argument("--learning_rate", dest="learning_rate", default=0.001, help="Learning Rate")
 parser.add_argument("--epochs", dest="epochs", default=5, help="Number of Epochs")
 parser.add_argument("--batch_size", dest="batch_size", default=5, help="Batch Size")
+parser.add_argument("--rc", dest="residual_channels", default=64, help="Channel in the Residual Block")
 parser.add_argument("--depth", dest="depth", default=32, help="Number of Residual Block")
 parser.add_argument("--dropout", dest="dropout", default=0.3, help="Dropout Value")
 
@@ -69,31 +71,36 @@ else:
     file_csv = './validation_set.csv'
 
 npz = args.dataset
-L = 128 #256 # Dimension of matrix 
+L = args.dim
 
 learning_rate = float(args.learning_rate)
 epochs = int(args.epochs)
 batch_size = int(args.batch_size)
+residualChannels = int(args.residual_channels)
 depth = int(args.depth)
-dropout = int(args.dropout)
+dropout = float(args.dropout)
 
 channels = 82 #da calcolare
 
 # Loading and Transforming data
 trainset = MSA(file_csv, npz, L)
 valset = MSA(file_csv, npz, L)
-trainloader = DataLoader(trainset, batch_size, shuffle=True) #num_workers (int, optional) – how many subprocesses to use for data loading. 0 means that the data will be loaded in the main process. (default: 0)
+
+trainloader = DataLoader(trainset, batch_size, shuffle=True) 
 valloader = DataLoader(valset, batch_size, shuffle=True)
 
 #inizializzazione rete
-net = CNN_protein(channels, L, depth, dropout)
+net = CNN_protein(channels, residualChannels, L, depth, dropout)
 
 hyper_parameters = {
-    #ADD
-    'batch_size': batch_size,
-    'epochs': epochs,
-    'learning_rate': learning_rate,
-    'dropout_value': dropout,
+    'DIMENSION': L,
+    'BATCH_SIZE': batch_size,
+    'EPOCH': epochs,
+    'LEARNING_RATE': learning_rate,
+    'DROPOUT_VALUE': dropout,
+    'DEPTH': depth,
+    'CHANNELS': channels,
+    'RESIDUAL_CHANNELS': residualChannels
 }
 experiment.log_parameters(hyper_parameters)
 experiment.set_model_graph(net)

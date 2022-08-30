@@ -109,33 +109,31 @@ class PSFM(object):
 
 
 class ShannonEntropy(object):
-    #Genera Position Specific Frequency Matrix: https://www.researchgate.net/publication/320173501_PSFM-DBT_Identifying_DNA-Binding_Proteins_by_Combing_Position_Specific_Frequency_Matrix_and_Distance-Bigram_Transformation
-    #tenedo in considerazione gli MSA
-    def __init__(self, size): #dimensione della matrice
+    def __init__(self, size): 
         self.size = size
 
     def __call__(self, msa):
-        sample = np.zeros((self.size), dtype=int)
+        entropy = np.zeros(msa.shape[1])
+        for j in range(msa.shape[1]):
+            for i in range(21):
+                freq = np.count_nonzero(msa[:, j] == i) / (msa.shape[0])
+                if freq > 0:
+                    entropy[j] = entropy[j] + -(freq * math.log(freq, 2))
+        
+        entropy = entropy[:, np.newaxis]
+        t = entropy
+        for i in range(msa.shape[1]-1):
+            entropy = np.concatenate((entropy, t), axis=1)
+        
+        entropy = entropy[np.newaxis, :, :]
+        entropy = torch.from_numpy(entropy)
+        entropy = torch.cat((entropy, torch.permute(entropy, (0, 2, 1))), 0)
 
-        if sample.shape == (42, self.size, self.size):
-            return sample
+        if entropy.shape == (2, self.size, self.size):
+            return entropy
         else:
-            print("Error: Wrong matrix dimension in PSFM!")
+            print("Error: Wrong matrix dimension in Shannon Entropy!")
             return []
-    
-    def shannon_entropy_corrected(dna_sequence):
-        """Custom implementation of shannon entropy with a full non-binarized sequence
-            Formula looks like this
-            H(S) = −Σ P(Si) log2 (P(Si))
-            P(Si) here is simply the relative frequency of character A,T,G,C or n in the string.
-        """
-        entropy = 0
-        for nucleotide in {'A', 'T', 'G', 'C', 'N'}:
-            rel_freq = dna_sequence.count(nucleotide) / len(dna_sequence)
-            if rel_freq > 0:
-                entropy = entropy + -(rel_freq * math.log(rel_freq, 2))
-            
-        return entropy
 
 
 class Distances(object):
@@ -167,7 +165,7 @@ class Distances(object):
             dist = dist[None, :, :]
             return dist
         else:
-            print("Error: Wrong CONTACT MAP dimension!") #Giusto?
+            print("Error: Wrong CONTACT MAP dimension!") 
             return []
 
 
@@ -186,7 +184,7 @@ class MSA(Dataset):
         self.fixed = FixedDimension(self.size)
         self.ohe = OneHotEncoded(self.size)
         self.psfm = PSFM(self.size)
-        #self.shannon 
+        self.se = ShannonEntropy(self.size)
 
     #ritorna quanti samples ci sono nel dataset
     def __len__(self):
@@ -206,14 +204,21 @@ class MSA(Dataset):
             transf1 = self.ohe(item)
             transf1 = torch.permute(transf1, (1, 2, 0))
 
-            # One Hot Encoded = 42xLxL
+            # PSFM = 42xLxL
             transf2 = self.psfm(item)
             transf2 = torch.permute(transf2, (1, 2, 0))
+
+            # Shannon = 2xLxL
+            transf3 = self.se(item)
 
             # Features Tensor of ChannelsxLxL TODO
             msa = torch.cat((transf1, transf2), dim=2)
             msa = torch.permute(msa, (2, 0, 1))
+            msa = torch.cat((msa, transf3), dim=2)
             sample = {'msa': msa, 'distances': d}
+
+            #Gestire caso in cui lui è più corto di 256
+
         return sample
 
 

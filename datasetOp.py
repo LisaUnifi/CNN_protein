@@ -127,7 +127,7 @@ class ShannonEntropy(object):
         
         entropy = entropy[np.newaxis, :, :]
         entropy = torch.from_numpy(entropy)
-        entropy = torch.cat((entropy, torch.permute(entropy, (0, 2, 1))), 0)
+        entropy = torch.cat((torch.permute(entropy, (0, 2, 1)), entropy), 0)
 
         if entropy.shape == (2, self.size, self.size):
             return entropy
@@ -202,19 +202,15 @@ class MSA(Dataset):
 
             # One Hot Encoded = 40xLxL
             transf1 = self.ohe(item)
-            transf1 = torch.permute(transf1, (1, 2, 0))
 
             # PSFM = 42xLxL
             transf2 = self.psfm(item)
-            transf2 = torch.permute(transf2, (1, 2, 0))
 
             # Shannon = 2xLxL
             transf3 = self.se(item)
 
             # Features Tensor of ChannelsxLxL TODO
-            msa = torch.cat((transf1, transf2), dim=2)
-            msa = torch.permute(msa, (2, 0, 1))
-            msa = torch.cat((msa, transf3), dim=2)
+            msa = torch.cat((transf1, transf2, transf3), dim=0)
             sample = {'msa': msa, 'distances': d}
 
             #Gestire caso in cui lui è più corto di 256

@@ -1,6 +1,5 @@
 import torch
 from torch.utils.data import Dataset
-from torchvision import datasets
 import math
 import pandas as pd
 import numpy as np
@@ -8,11 +7,9 @@ import os
 
 
 class FixedDimension(object):
-    # RANDOMLY SLICED ??
-
-    #Prende i primi 256 elementi nelle sequenze del msa
-    def __init__(self, size): #dimensione della matrice
+    def __init__(self, size, n_seq): #dimensione della matrice
         self.size = size
+        self.n_seq = n_seq
 
     def __call__(self, msa):
         if msa.shape[1] >= self.size:
@@ -21,11 +18,17 @@ class FixedDimension(object):
             zero = np.zeros((msa.shape[0], self.size-msa.shape[1]), dtype=int)
             a = 21 + zero
             msa = np.concatenate((msa, a), axis=1)
+
+        if msa.shape[0] > self.n_seq:
+            msa = msa[0:self.n_seq, :]
+        else:
+            zero = np.zeros((self.n_seq-msa.shape[0], self.size), dtype=int)
+            b = 21 + zero
+            msa = np.concatenate((msa, b), axis=0)
         
         msa = msa.astype(int)
-        #msa = torch.from_numpy(msa)
 
-        if msa.shape[1] == self.size:
+        if msa.shape == (self.n_seq, self.size):
             return msa
         else:
             print("Error: Wrong MSA matrix dimension!")
@@ -136,6 +139,74 @@ class ShannonEntropy(object):
             return []
 
 
+class CovarianceMatrix(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, msa):
+
+        #calcolo degli weights 
+        weight = np.ones(msa.shape[0])
+        for i in range(msa.shape[0]):
+            for j in range(i+1, msa.shape[0]):
+                similar = int(msa.shape[1] * 0.2)
+                for k in range(msa.shape[1]):
+                    if similar > 0:
+                        if (msa[i, k] != msa[j, k]):
+                            similar = similar - 1
+                if similar > 0:
+                    weight[i] += 1
+                    weight[j] += 1
+
+        #calcolo Meff 
+        weight = 1/weight
+        meff = np.sum(weight)
+
+        #calcolo frequenza
+        pa = np.ones((msa.shape[1], 21)) #Matrice Lx21
+        for i in range(msa.shape[1]):
+            for a in range(21):
+                pa[i, a] = 1.0 
+            for k in range(msa.shape[0]):
+                a = msa[k, i]
+                if a < 21:
+                    pa[i, a] = pa[i, a] + weight[k]
+            for a in range(21):
+                pa[i, a] = pa[i, a] / (21.0 + meff)
+                
+        pab = np.zeros((msa.shape[1], msa.shape[1], 21, 21)) #Matrice LxLx21x21
+        for i in range(msa.shape[1]):
+            for j in range(msa.shape[1]):
+                for a in range(21):
+                    for b in range(21):
+                        pab[i, j, a, b] = 1.0 / 21.0
+                for k in range(msa.shape[0]):
+                    a = msa[k, i]
+                    b = msa[k, j]
+                    if (a < 21 and b < 21):
+                        pab[i, j, a, b] = pab[i, j, a, b] + weight[k]
+                for a in range(21):
+                    for b in range(21):
+                        pab[i, j, a, b] = pab[i, j, a, b] / (21.0 + meff)
+
+        #calcolo matrice di covarianza
+        cov = np.zeros((msa.shape[1], msa.shape[1], 21, 21)) #Matrice LxLx21x21
+        for a in range(21):
+            for b in range(21):
+                for i in range(msa.shape[1]):
+                    for j in range(msa.shape[1]):
+                        cov[i, j, a, b] = pab[i, j, a, b] - (pa[i, a] * pa[j, b])
+        cov_final = cov.reshape(msa.shape[1], msa.shape[1], 21*21)
+        cov_final = torch.from_numpy(cov_final)
+        cov_final = torch.permute(cov_final, (2, 0, 1))
+
+        if cov_final.shape == (441, self.size, self.size):
+            return cov_final
+        else:
+            print("Error: Wrong matrix dimension in Covariance Matrix!")
+            return []
+        
+
 class Distances(object):
     #Prende i primi 256x256 valori della Contact Map
     def __init__(self, size): 
@@ -171,26 +242,23 @@ class Distances(object):
 
 class MSA(Dataset):
 
-    # TODO: Ricorda di trasformare tutto in un tensore torch
-
-    #quando viene inizializzato l'oggetto del dataset
-    def __init__(self, file_csv, npz, size):
+    def __init__(self, file_csv, npz, size, n_seq):
         self.file_csv = pd.read_csv(file_csv)
         self.npz = npz
         self.size = size
+        self.n_seq = n_seq
 
         self.dist = Distances(self.size)
 
-        self.fixed = FixedDimension(self.size)
+        self.fixed = FixedDimension(self.size, self.n_seq)
         self.ohe = OneHotEncoded(self.size)
         self.psfm = PSFM(self.size)
         self.se = ShannonEntropy(self.size)
+        self.cov = CovarianceMatrix(self.size)
 
-    #ritorna quanti samples ci sono nel dataset
     def __len__(self):
         return self.file_csv.shape[0]
 
-    #ritorna un sample con un dato indice e trasformazione quando presente 
     def __getitem__(self, index):
         file = np.load(os.path.join(self.npz, self.file_csv.iloc[index, 1]+'.npz'))
         if self.size > 0:
@@ -209,12 +277,12 @@ class MSA(Dataset):
             # Shannon = 2xLxL
             transf3 = self.se(item)
 
-            # Features Tensor of ChannelsxLxL TODO
-            msa = torch.cat((transf1, transf2, transf3), dim=0)
+            # Covariance = 441xLxL
+            transf4 = self.cov(item)
+
+            # Features Tensor of 525xLxL 
+            #msa = torch.cat((transf1, transf2, transf3), dim=0)
+            msa = torch.cat((transf1, transf2, transf3, transf4), dim=0)
             sample = {'msa': msa, 'distances': d}
 
-            #Gestire caso in cui lui è più corto di 256
-
         return sample
-
-

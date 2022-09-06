@@ -48,6 +48,8 @@ class CNN_protein(nn.Module):
         x = self.relu(x)
         x = self.conv1(x)
 
+        #Bias thing: https://pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+
         #Max pooling??
 
         #Residual Block executed depth time

@@ -26,6 +26,7 @@ import torch
 from tqdm import tqdm
 import pandas as pd
 
+#https://github.com/facebookresearch/esm/blob/982c3f69478f141de60a6fa35fff2880793141ce/examples/contact_prediction.ipynb
 
 
 def compute_precisions(

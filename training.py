@@ -86,8 +86,8 @@ channels = 525 #84 #da calcolare
 trainset = MSA(file_csv, npz, L, n_seq)
 valset = MSA(val_csv, npz, L, n_seq)
 
-trainloader = DataLoader(trainset, batch_size, shuffle=True, num_workers=4) 
-valloader = DataLoader(valset, batch_size, shuffle=True, num_workers=4)
+trainloader = DataLoader(trainset, batch_size, shuffle=True, num_workers=8, pin_memory=True) 
+valloader = DataLoader(valset, batch_size, shuffle=True, num_workers=8, pin_memory=True)
 
 #inizializzazione rete
 net = CNN_protein(channels, residualChannels, L, depth, dropout)
@@ -104,7 +104,7 @@ hyper_parameters = {
     'RESIDUAL_CHANNELS': residualChannels
 }
 experiment.log_parameters(hyper_parameters)
-experiment.set_model_graph(net)
+experiment.set_model_graph(net, overwrite=True)
 
 #Weights
 wpath = './model_weights'
@@ -117,6 +117,11 @@ if not os.path.exists(new_path):
 with open(new_path + '/hp.json', 'w') as hp:
     json.dump(hyper_parameters, hp, indent=4)
 
+# Parameters counter
+model_parameters = filter(lambda p: p.requires_grad, net.parameters()) 
+params = sum([np.prod(p.size()) for p in model_parameters])
+experiment.log_other('N_PARAMETERS', params)
+print("Number of parameters: ", params)
 
 #ottimizzatore e loss
 lossFunction = nn.BCELoss() 
@@ -199,7 +204,7 @@ for e in range(epochs):
         print(f'END EVALUATION EPOCH {e}:')       
     
     if e % 5 == 4:
-        torch.save(net.state_dict(), new_path + '/w_' + str(epochs + 1) + '.pth')
+        torch.save(net.state_dict(), new_path + '/w_' + str(e + 1) + '.pth')
 torch.save(net.state_dict(), new_path + '/w_end' + '.pth')
 
 print(f'END TRAINING!')

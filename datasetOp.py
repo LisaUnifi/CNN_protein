@@ -242,11 +242,12 @@ class Distances(object):
 
 class MSA(Dataset):
 
-    def __init__(self, file_csv, npz, size, n_seq):
+    def __init__(self, file_csv, npz, size, n_seq, device):
         self.file_csv = pd.read_csv(file_csv)
         self.npz = npz
         self.size = size
         self.n_seq = n_seq
+        self.device = device
 
         self.dist = Distances(self.size)
 
@@ -261,6 +262,7 @@ class MSA(Dataset):
 
     def __getitem__(self, index):
         file = np.load(os.path.join(self.npz, self.file_csv.iloc[index, 1]+'.npz'))
+        file = torch.from_numpy(file).to(self.device)
         if self.size > 0:
             # Ground Truth generation
             d = self.dist(file['dist6d'])

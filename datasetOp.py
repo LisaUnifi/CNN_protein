@@ -1,8 +1,10 @@
+import covariance
 import torch
 from torch.utils.data import Dataset
 import math
 import pandas as pd
 import numpy as np
+import pickle
 import os
 
 
@@ -14,7 +16,9 @@ class FixedDimension(object):
     def __call__(self, msa):
         if msa.shape[1] >= self.size:
             msa = msa[:, 0:self.size]
+            slen = self.size
         else:
+            slen = msa.shape[1]
             zero = np.zeros((msa.shape[0], self.size-msa.shape[1]), dtype=int)
             a = 21 + zero
             msa = np.concatenate((msa, a), axis=1)
@@ -29,7 +33,7 @@ class FixedDimension(object):
         msa = msa.astype(int)
 
         if msa.shape == (self.n_seq, self.size):
-            return msa
+            return msa, slen
         else:
             print("Error: Wrong MSA matrix dimension!")
             return []
@@ -77,7 +81,6 @@ class OneHotEncoded(object):
 
 class PSFM(object):
     #Genera Position Specific Frequency Matrix: https://www.researchgate.net/publication/320173501_PSFM-DBT_Identifying_DNA-Binding_Proteins_by_Combing_Position_Specific_Frequency_Matrix_and_Distance-Bigram_Transformation
-    #tenedo in considerazione gli MSA
     def __init__(self, size): 
         self.size = size
 
@@ -94,7 +97,7 @@ class PSFM(object):
         sample = sample.reshape(22, self.size)
         sample = sample[1:22, :]
 
-        #From row of hot encoded sub array to nparray of shape = (21, self.size, self.size)
+        #To nparray of shape = (21, self.size, self.size)
         sample = sample[:, :, np.newaxis]
         t = sample
         for i in range(self.size-1):
@@ -145,58 +148,10 @@ class CovarianceMatrix(object):
 
     def __call__(self, msa):
 
-        #calcolo degli weights 
-        weight = np.ones(msa.shape[0])
-        for i in range(msa.shape[0]):
-            for j in range(i+1, msa.shape[0]):
-                similar = int(msa.shape[1] * 0.2)
-                for k in range(msa.shape[1]):
-                    if similar > 0:
-                        if (msa[i, k] != msa[j, k]):
-                            similar = similar - 1
-                if similar > 0:
-                    weight[i] += 1
-                    weight[j] += 1
-
-        #calcolo Meff 
-        weight = 1/weight
-        meff = np.sum(weight)
-
-        #calcolo frequenza
-        pa = np.ones((msa.shape[1], 21)) #Matrice Lx21
-        for i in range(msa.shape[1]):
-            for a in range(21):
-                pa[i, a] = 1.0 
-            for k in range(msa.shape[0]):
-                a = msa[k, i]
-                if a < 21:
-                    pa[i, a] = pa[i, a] + weight[k]
-            for a in range(21):
-                pa[i, a] = pa[i, a] / (21.0 + meff)
-                
-        pab = np.zeros((msa.shape[1], msa.shape[1], 21, 21)) #Matrice LxLx21x21
-        for i in range(msa.shape[1]):
-            for j in range(msa.shape[1]):
-                for a in range(21):
-                    for b in range(21):
-                        pab[i, j, a, b] = 1.0 / 21.0
-                for k in range(msa.shape[0]):
-                    a = msa[k, i]
-                    b = msa[k, j]
-                    if (a < 21 and b < 21):
-                        pab[i, j, a, b] = pab[i, j, a, b] + weight[k]
-                for a in range(21):
-                    for b in range(21):
-                        pab[i, j, a, b] = pab[i, j, a, b] / (21.0 + meff)
-
-        #calcolo matrice di covarianza
-        cov = np.zeros((msa.shape[1], msa.shape[1], 21, 21)) #Matrice LxLx21x21
-        for a in range(21):
-            for b in range(21):
-                for i in range(msa.shape[1]):
-                    for j in range(msa.shape[1]):
-                        cov[i, j, a, b] = pab[i, j, a, b] - (pa[i, a] * pa[j, b])
-        cov_final = cov.reshape(msa.shape[1], msa.shape[1], 21*21)
+        #Cij^AB = fij(A,B) - fi(A)fj(B)
+        
+        f_msa = np.array(msa, dtype=float)
+        cov_final = covariance.with_cython(f_msa)
         cov_final = torch.from_numpy(cov_final)
         cov_final = torch.permute(cov_final, (2, 0, 1))
 
@@ -208,7 +163,6 @@ class CovarianceMatrix(object):
         
 
 class Distances(object):
-    #Prende i primi 256x256 valori della Contact Map
     def __init__(self, size): 
         self.size = size
 
@@ -242,12 +196,11 @@ class Distances(object):
 
 class MSA(Dataset):
 
-    def __init__(self, file_csv, npz, size, n_seq, device):
+    def __init__(self, file_csv, npz, size, n_seq):
         self.file_csv = pd.read_csv(file_csv)
         self.npz = npz
         self.size = size
         self.n_seq = n_seq
-        self.device = device
 
         self.dist = Distances(self.size)
 
@@ -262,13 +215,13 @@ class MSA(Dataset):
 
     def __getitem__(self, index):
         file = np.load(os.path.join(self.npz, self.file_csv.iloc[index, 1]+'.npz'))
-        file = torch.from_numpy(file).to(self.device)
+        name = self.file_csv.iloc[index, 1]
         if self.size > 0:
             # Ground Truth generation
             d = self.dist(file['dist6d'])
 
             # Resize of MSA to SxL
-            item = self.fixed(file['msa'])
+            item, slen = self.fixed(file['msa'])
 
             # One Hot Encoded = 40xLxL
             transf1 = self.ohe(item)
@@ -285,6 +238,9 @@ class MSA(Dataset):
             # Features Tensor of 525xLxL 
             #msa = torch.cat((transf1, transf2, transf3), dim=0)
             msa = torch.cat((transf1, transf2, transf3, transf4), dim=0)
-            sample = {'msa': msa, 'distances': d}
+            #sample = {'msa': transf4, 'distances': d}
+            sample = {'msa': msa, 'distances': d, 'name': name, 'slen': slen}
 
         return sample
+
+
